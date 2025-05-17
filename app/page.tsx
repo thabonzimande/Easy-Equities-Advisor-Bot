@@ -1,12 +1,13 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Send, PieChart, BarChart2, TrendingUp, AlertCircle } from "lucide-react"
+import { Send, PieChart, BarChart2, TrendingUp, AlertCircle, ThumbsUp, ThumbsDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { PieChart as RechartsPieChart, Pie, Cell, ResponsiveContainer, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid } from "recharts"
+import { FeedbackButton } from './components/FeedbackButton'
 
 type Message = {
   role: "user" | "bot"
@@ -38,9 +39,90 @@ type UserProfile = {
   riskTolerance: string
   incomeNeeds: string
   investmentAmount: string
+  investmentType?: 'once-off' | 'monthly'
+  monthlyAmount?: string
 }
 
 const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884D8"]
+
+// Add a simple thumbs feedback component
+function ThumbsFeedback({ label, onFeedback, isDarkMode }: { label: string; onFeedback: (val: 'up' | 'down') => void; isDarkMode: boolean }) {
+  const [selected, setSelected] = useState<string | null>(null)
+  return (
+    <div className="flex items-center space-x-2 mt-4">
+      <span className={`text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>{label}</span>
+      <button
+        aria-label="Thumbs up"
+        onClick={() => { setSelected('up'); onFeedback('up') }}
+        className={`p-1 rounded-full border ${selected === 'up' ? 'border-green-500' : 'border-transparent'} ${isDarkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-200'}`}
+      >
+        <ThumbsUp className={`w-5 h-5 ${selected === 'up' ? 'text-green-500' : isDarkMode ? 'text-gray-300' : 'text-gray-500'}`} />
+      </button>
+      <button
+        aria-label="Thumbs down"
+        onClick={() => { setSelected('down'); onFeedback('down') }}
+        className={`p-1 rounded-full border ${selected === 'down' ? 'border-red-500' : 'border-transparent'} ${isDarkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-200'}`}
+      >
+        <ThumbsDown className={`w-5 h-5 ${selected === 'down' ? 'text-red-500' : isDarkMode ? 'text-gray-300' : 'text-gray-500'}`} />
+      </button>
+      {selected && <span className="ml-2 text-xs text-green-500">Thank you!</span>}
+    </div>
+  )
+}
+
+// Custom label for Pie slices
+function renderPieLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent, name }: any, isDarkMode: boolean) {
+  const RADIAN = Math.PI / 180;
+  const radius = innerRadius + (outerRadius - innerRadius) * 0.7;
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+  return (
+    <text
+      x={x}
+      y={y}
+      fill={isDarkMode ? '#fff' : '#222'}
+      fontSize={14}
+      fontWeight="bold"
+      textAnchor={x > cx ? 'start' : 'end'}
+      dominantBaseline="central"
+      style={{ textShadow: isDarkMode ? '0 1px 2px #000' : '0 1px 2px #fff' }}
+    >
+      {`${name} ${(percent * 100).toFixed(0)}%`}
+    </text>
+  );
+}
+
+// Helper to render a markdown-like table as HTML
+function renderPortfolioTable(tableText: string) {
+  const lines = tableText.trim().split('\n');
+  if (lines.length < 3) return null;
+  const headers = lines[0].split('|').map(h => h.trim()).filter(Boolean);
+  // Skip the separator row and only include lines that look like table rows
+  const rowLines = lines.slice(2).filter(line => line.trim().startsWith('|') && line.trim().endsWith('|'));
+  const rows = rowLines.map(line => line.split('|').map(cell => cell.trim()).filter(Boolean));
+  return (
+    <div className="overflow-x-auto my-2">
+      <table className="min-w-full text-sm border border-gray-700 rounded-lg overflow-hidden">
+        <thead className="bg-gray-700 text-white">
+          <tr>
+            {headers.map((header, i) => (
+              <th key={i} className="px-3 py-2 font-semibold text-left border-b border-gray-600">{header}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="bg-gray-800">
+          {rows.map((row, i) => (
+            <tr key={i} className="border-b border-gray-700 last:border-b-0">
+              {row.map((cell, j) => (
+                <td key={j} className="px-3 py-2 whitespace-nowrap text-gray-100">{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 export default function EasyEquitiesAdvisor() {
   const [messages, setMessages] = useState<Message[]>([
@@ -58,11 +140,11 @@ export default function EasyEquitiesAdvisor() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
 
   useEffect(() => {
-    const scrollArea = document.querySelector(".scroll-area") as HTMLElement | null
+    const scrollArea = document.querySelector('.scroll-area-viewport');
     if (scrollArea) {
-      scrollArea.scrollTop = scrollArea.scrollHeight
+      scrollArea.scrollTop = scrollArea.scrollHeight;
     }
-  }, [])
+  }, [messages]);
 
   // Helper function to validate time horizon input
   const validateTimeHorizon = (input: string): number | null => {
@@ -82,81 +164,124 @@ export default function EasyEquitiesAdvisor() {
     return !isNaN(amount) && amount > 0 ? amount : null
   }
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (input.trim()) {
-      setMessages([...messages, { role: "user", content: input }])
-      generateBotResponse(input)
-      setInput("")
+      const userMessage = input.trim();
+      setInput("");
+      setMessages(prev => [...prev, { role: "user", content: userMessage }]);
+      
+      try {
+        await generateBotResponse(userMessage);
+      } catch (error) {
+        console.error('Error generating response:', error);
+        setMessages(prev => [...prev, { 
+          role: "bot", 
+          content: "I apologize, but I encountered an error. Please try again." 
+        }]);
+      }
     }
-  }
+  };
 
   const generateBotResponse = async (userInput: string) => {
-    let botResponse = ""
-    const updatedProfile = { ...userProfile }
+    const updatedProfile = { ...userProfile };
+    let botResponse = "";
 
-    if (!updatedProfile.investmentGoal) {
-      updatedProfile.investmentGoal = userInput
-      setUserProfile(updatedProfile)
-      botResponse = "How long do you plan to invest for? Please specify the number of years (e.g., 5 years, 10 years, etc.)"
-    } 
-    else if (!updatedProfile.timeHorizon) {
-      const timeHorizon = validateTimeHorizon(userInput)
-      if (timeHorizon) {
-        updatedProfile.timeHorizon = timeHorizon
-        setUserProfile(updatedProfile)
-        botResponse = "What's your risk tolerance? (Low, Medium, or High)"
-      } else {
-        botResponse = "Please enter a valid time horizon in years (between 1 and 50 years)"
-      }
-    }
-    else if (!updatedProfile.riskTolerance) {
-      const riskTolerance = validateRiskTolerance(userInput)
-      if (riskTolerance) {
-        updatedProfile.riskTolerance = riskTolerance
-        setUserProfile(updatedProfile)
-        botResponse = "Do you need regular income from this investment? (Yes/No)"
-      } else {
-        botResponse = "Please specify your risk tolerance as Low, Medium, or High"
-      }
-    }
-    else if (!updatedProfile.incomeNeeds) {
-      const incomeNeeds = userInput.toLowerCase()
-      if (incomeNeeds === "yes" || incomeNeeds === "no") {
-        updatedProfile.incomeNeeds = incomeNeeds
-        setUserProfile(updatedProfile)
-        botResponse = "How much are you planning to invest? (in Rands)"
-      } else {
-        botResponse = "Please answer Yes or No regarding your income needs"
-      }
-    }
-    else if (!updatedProfile.investmentAmount) {
-      const amount = validateAmount(userInput)
-      if (amount) {
-        updatedProfile.investmentAmount = amount.toString()
-        setUserProfile(updatedProfile)
-        try {
-          const portfolioData = await generatePortfolio(updatedProfile)
-          if (portfolioData) {
-            botResponse = generateAdvice(portfolioData.portfolio, amount, updatedProfile)
+    try {
+      if (!updatedProfile.investmentGoal) {
+        const amount = validateAmount(userInput);
+        if (amount) {
+          updatedProfile.investmentGoal = userInput;
+          setUserProfile(updatedProfile);
+          botResponse = "How long do you plan to invest for? Please specify the number of years (e.g., 5 years, 10 years, etc.)";
+        } else {
+          botResponse = "Please enter a valid investment amount (e.g., 10000)";
+        }
+      } else if (!updatedProfile.timeHorizon) {
+        const timeHorizon = validateTimeHorizon(userInput);
+        if (timeHorizon) {
+          updatedProfile.timeHorizon = timeHorizon;
+          setUserProfile(updatedProfile);
+          botResponse = "What's your risk tolerance? (Low, Medium, or High)";
+        } else {
+          botResponse = "Please enter a valid time horizon in years (between 1 and 50 years)";
+        }
+      } else if (!updatedProfile.riskTolerance) {
+        const riskTolerance = validateRiskTolerance(userInput);
+        if (riskTolerance) {
+          updatedProfile.riskTolerance = riskTolerance;
+          setUserProfile(updatedProfile);
+          botResponse = "Do you need regular income from this investment? (Yes/No)";
+        } else {
+          botResponse = "Please specify your risk tolerance as Low, Medium, or High";
+        }
+      } else if (!updatedProfile.incomeNeeds) {
+        const incomeNeeds = userInput.toLowerCase();
+        if (incomeNeeds === "yes" || incomeNeeds === "no") {
+          updatedProfile.incomeNeeds = incomeNeeds;
+          setUserProfile(updatedProfile);
+          botResponse = "How much are you planning to invest? (in Rands)";
+        } else {
+          botResponse = "Please answer Yes or No regarding your income needs";
+        }
+      } else if (!updatedProfile.investmentAmount) {
+        const amount = validateAmount(userInput);
+        if (amount) {
+          updatedProfile.investmentAmount = amount.toString();
+          setUserProfile(updatedProfile);
+          botResponse = "Is this a once-off lump sum investment or a recurring monthly investment? (Type 'once-off' or 'monthly')";
+        } else {
+          botResponse = "Please enter a valid investment amount (e.g., 10000)";
+        }
+      } else if (!updatedProfile.investmentType) {
+        const type = userInput.toLowerCase();
+        if (type === 'once-off' || type === 'monthly') {
+          updatedProfile.investmentType = type as 'once-off' | 'monthly';
+          setUserProfile(updatedProfile);
+          if (type === 'monthly') {
+            botResponse = "What is the monthly amount you plan to invest? (in Rands)";
           } else {
-            botResponse = "I apologize, but I couldn't generate a portfolio at this time. Please try again later."
+            // Proceed to portfolio generation for once-off
+            const portfolioData = await generatePortfolio(updatedProfile);
+            if (portfolioData) {
+              botResponse = generateAdvice(portfolioData.portfolio, Number(updatedProfile.investmentAmount), updatedProfile);
+            } else {
+              botResponse = "I apologize, but I couldn't generate a portfolio at this time. Please try again later.";
+            }
           }
-        } catch (error) {
-          console.error('Error in portfolio generation:', error)
-          botResponse = "I apologize, but there was an error generating your portfolio. Please try again later."
+        } else {
+          botResponse = "Please specify 'once-off' for a lump sum or 'monthly' for a recurring investment.";
+        }
+      } else if (updatedProfile.investmentType === 'monthly' && !updatedProfile.monthlyAmount) {
+        const monthly = validateAmount(userInput);
+        if (monthly) {
+          updatedProfile.monthlyAmount = monthly.toString();
+          setUserProfile(updatedProfile);
+          // Proceed to portfolio generation for monthly
+          const portfolioData = await generatePortfolio(updatedProfile);
+          if (portfolioData) {
+            botResponse = generateAdvice(portfolioData.portfolio, Number(updatedProfile.monthlyAmount), updatedProfile);
+          } else {
+            botResponse = "I apologize, but I couldn't generate a portfolio at this time. Please try again later.";
+          }
+        } else {
+          botResponse = "Please enter a valid monthly investment amount (e.g., 1000)";
         }
       } else {
-        botResponse = "Please enter a valid investment amount (e.g., 10000)"
+        botResponse = "I've already provided a portfolio recommendation. If you'd like a new one, please refresh the page to start over.";
       }
-    } else {
-      botResponse = "I've already provided a portfolio recommendation. If you'd like a new one, please start a new session."
-    }
 
-    setMessages((prev) => [...prev, { role: "bot", content: botResponse }])
-  }
+      setMessages(prev => [...prev, { role: "bot", content: botResponse }]);
+    } catch (error) {
+      console.error('Error in bot response:', error);
+      throw error;
+    }
+  };
 
   const generatePortfolio = async (profile: Partial<UserProfile>) => {
     try {
+      const amount = profile.investmentType === 'monthly' && profile.monthlyAmount
+        ? Number(profile.monthlyAmount)
+        : Number(profile.investmentAmount);
       const response = await fetch('/api/portfolio', {
         method: 'POST',
         headers: {
@@ -167,9 +292,10 @@ export default function EasyEquitiesAdvisor() {
             age: 30, // Default age
             riskScore: profile.riskTolerance === 'low' ? 3 : profile.riskTolerance === 'medium' ? 5 : 8,
             investmentHorizon: profile.timeHorizon || 5,
-            incomeNeeds: profile.incomeNeeds === 'yes'
+            incomeNeeds: profile.incomeNeeds === 'yes',
+            investmentType: profile.investmentType,
           },
-          amount: Number(profile.investmentAmount)
+          amount
         })
       });
 
@@ -192,51 +318,63 @@ export default function EasyEquitiesAdvisor() {
   };
 
   const generateAdvice = (portfolio: Portfolio, amount: number, profile: Partial<UserProfile>) => {
-    let advice = `Based on your profile:\n\n`
-    advice += `Investment Goal: ${profile.investmentGoal}\n`
-    advice += `Time Horizon: ${profile.timeHorizon} years\n`
-    advice += `Risk Tolerance: ${profile.riskTolerance}\n`
-    advice += `Income Needs: ${profile.incomeNeeds}\n`
-    advice += `Investment Amount: R${amount.toFixed(2)}\n\n`
-    advice += `Here's your personalized Easy Equities portfolio:\n\n`
-    advice += `Model Portfolio:\n\n`
+    let advice = `Based on your profile:\n\n`;
+    advice += `Investment Goal: ${profile.investmentGoal}\n`;
+    advice += `Time Horizon: ${profile.timeHorizon} years\n`;
+    advice += `Risk Tolerance: ${profile.riskTolerance}\n`;
+    advice += `Income Needs: ${profile.incomeNeeds}\n`;
+    if (profile.investmentType === 'monthly') {
+      advice += `Investment Type: Monthly\n`;
+      advice += `Monthly Amount: R${amount.toFixed(2)}\n`;
+    } else {
+      advice += `Investment Type: Once-off\n`;
+      advice += `Investment Amount: R${amount.toFixed(2)}\n`;
+    }
+    advice += `\nHere's your personalized Easy Equities portfolio:\n\n`;
+    advice += `Model Portfolio (Table):\n\n`;
+    advice += `| ETF | Allocation | Amount (R) | Description |\n`;
+    advice += `| --- | ---------- | ---------- | ----------- |\n`;
 
     Object.entries(portfolio).forEach(([etf, details]) => {
-      const allocation = details.allocation * 100
-      const etfAmount = amount * details.allocation
-      advice += `${etf} (${allocation.toFixed(1)}%): R${etfAmount.toFixed(2)}\n`
-      advice += `${details.description}\n\n`
-    })
+      const allocation = details.allocation * 100;
+      const etfAmount = amount * details.allocation;
+      advice += `| ${etf} | ${allocation.toFixed(1)}% | R${etfAmount.toFixed(2)} | ${details.description} |\n`;
+    });
 
-    // Add time horizon specific advice if applicable
+    if (profile.investmentType === 'monthly') {
+      advice += `\nMonthly Investment Strategy:\n\n`;
+      advice += `• Consider setting up a monthly debit order for consistent investing (rand-cost averaging)\n`;
+      advice += `• Review your portfolio allocation every 6-12 months\n`;
+      advice += `• Reinvest dividends to maximize compounding\n\n`;
+    }
+
     if (profile.timeHorizon && profile.timeHorizon > 10) {
-      advice += `Long-term Investment Strategy:\n\n`
-      advice += `• Consider automatic reinvestment of dividends\n`
-      advice += `• Plan for periodic rebalancing (every 6-12 months)\n`
-      advice += `• Focus on cost-averaging through regular contributions\n\n`
+      advice += `Long-term Investment Strategy:\n\n`;
+      advice += `• Consider automatic reinvestment of dividends\n`;
+      advice += `• Plan for periodic rebalancing (every 6-12 months)\n`;
+      advice += `• Focus on cost-averaging through regular contributions\n\n`;
     }
 
-    // Add income needs specific advice
     if (profile.incomeNeeds === 'yes') {
-      advice += `Income Strategy:\n\n`
-      advice += `• Consider setting up a quarterly dividend withdrawal plan\n`
-      advice += `• Monitor dividend payment schedules of your ETFs\n`
-      advice += `• Maintain a cash buffer for consistent income\n\n`
+      advice += `Income Strategy:\n\n`;
+      advice += `• Consider setting up a quarterly dividend withdrawal plan\n`;
+      advice += `• Monitor dividend payment schedules of your ETFs\n`;
+      advice += `• Maintain a cash buffer for consistent income\n\n`;
     }
 
-    advice += `Implementation Steps:\n\n`
-    advice += `1. Log in to your Easy Equities account\n`
-    advice += `2. Navigate to the 'Buy' section\n`
-    advice += `3. Search for each ETF listed above\n`
-    advice += `4. Enter the Rand amount for each ETF as calculated above\n`
-    advice += `5. Review and confirm your orders\n\n`
+    advice += `Implementation Steps:\n\n`;
+    advice += `1. Log in to your Easy Equities account\n`;
+    advice += `2. Navigate to the 'Buy' section\n`;
+    advice += `3. Search for each ETF listed above\n`;
+    advice += `4. Enter the Rand amount for each ETF as calculated above\n`;
+    advice += `5. Review and confirm your orders\n\n`;
 
-    advice += `Remember to regularly review and rebalance your portfolio. Consider setting up a monthly debit order to consistently invest over time.\n\n`
+    advice += `Remember to regularly review and rebalance your portfolio. Consider setting up a monthly debit order to consistently invest over time.\n\n`;
 
-    advice += `Disclaimer: This is a simplified model and should not be considered as professional financial advice. Always do your own research and consider consulting with a qualified financial advisor before making investment decisions.`
+    advice += `Disclaimer: This is a simplified model and should not be considered as professional financial advice. Always do your own research and consider consulting with a qualified financial advisor before making investment decisions.`;
 
-    return advice
-  }
+    return advice;
+  };
 
   return (
     <div className={`flex h-screen ${isDarkMode ? 'bg-gray-900 text-white' : 'bg-gray-50 text-gray-900'}`}>
@@ -279,10 +417,10 @@ export default function EasyEquitiesAdvisor() {
 
         {/* Chat History */}
         {isSidebarOpen && (
-          <div className="flex-grow overflow-auto">
-            <h2 className="text-lg font-semibold mb-4">Chat History</h2>
+        <div className="flex-grow overflow-auto">
+          <h2 className="text-lg font-semibold mb-4">Chat History</h2>
             <div className="space-y-3">
-              {messages.map((message, index) => (
+          {messages.map((message, index) => (
                 <div
                   key={index}
                   className={`p-3 rounded-lg text-sm ${
@@ -297,53 +435,114 @@ export default function EasyEquitiesAdvisor() {
                 >
                   <span className="font-medium">
                     {message.role === "user" ? "You: " : "Advisor: "}
-                  </span>
-                  {message.content.length > 50 ? message.content.slice(0, 50) + "..." : message.content}
-                </div>
-              ))}
+              </span>
+              <div className="whitespace-pre-wrap break-words">
+                {message.role === "bot" && message.content.includes('Model Portfolio (Table):')
+                  ? (() => {
+                      const [before, tableAndAfter] = message.content.split('Model Portfolio (Table):');
+                      const tableMatch = tableAndAfter.match(/\| ETF \|[\s\S]+?(?=\n\n|$)/);
+                      const tableText = tableMatch ? tableMatch[0] : '';
+                      const after = tableAndAfter.replace(tableText, '');
+                      return <>
+                        {before && <span>{before.trim()}\n\n</span>}
+                        {tableText && renderPortfolioTable(tableText)}
+                        {after && <span>{after.trim()}</span>}
+                      </>;
+                    })()
+                  : message.content}
+              </div>
             </div>
-          </div>
+          ))}
+        </div>
+      </div>
         )}
       </div>
 
-      {/* Main Content */}
+      {/* Main Content - Single Scroll Container */}
       <div className="flex-grow overflow-y-auto">
-        <div className="p-6 max-w-[1600px] mx-auto">
+        <div className="p-6 max-w-[1600px] mx-auto space-y-6">
           {/* Chat Interface */}
           <Card className={`${
             isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'
-          } shadow-lg mb-6`}>
+          } shadow-lg`}>
             <CardHeader className="border-b border-gray-700 py-4">
               <CardTitle className="text-2xl font-bold">Investment Chat</CardTitle>
               <CardDescription className={isDarkMode ? 'text-gray-400' : 'text-gray-500'}>
                 Get personalized investment advice for Easy Equities
               </CardDescription>
             </CardHeader>
-            <CardContent className="p-6">
-              <div className="space-y-4">
-                {messages.map((message, index) => (
-                  <div
-                    key={index}
-                    className={`flex ${message.role === "user" ? "justify-end" : "justify-start"} animate-fadeIn`}
-                  >
+            <CardContent className="p-4">
+              <ScrollArea className="h-[400px]">
+                <div className="space-y-4 pb-2">
+                  {messages.map((message, index) => (
                     <div
-                      className={`rounded-lg px-6 py-3 max-w-[80%] shadow-sm ${
-                        message.role === "user"
-                          ? isDarkMode
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-blue-500 text-white'
-                          : isDarkMode
-                          ? 'bg-gray-700'
-                          : 'bg-gray-100'
-                      }`}
+                      key={index}
+                      className={`flex ${message.role === "user" ? "justify-end" : "justify-start"} animate-fadeIn w-full`}
                     >
-                      <div className="whitespace-pre-wrap">{message.content}</div>
+                      <div className={`flex flex-col ${message.role === "user" ? "items-end" : "items-start"} max-w-[80%]`}>
+                        <div
+                          className={`rounded-lg px-6 py-3 w-full shadow-sm ${
+                            message.role === "user"
+                              ? isDarkMode
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-blue-500 text-white'
+                              : isDarkMode
+                              ? 'bg-gray-700'
+                              : 'bg-gray-100'
+                          }`}
+                        >
+                          <div className="whitespace-pre-wrap break-words">
+                            {message.role === "bot" && message.content.includes('Model Portfolio (Table):')
+                              ? (() => {
+                                  const [before, tableAndAfter] = message.content.split('Model Portfolio (Table):');
+                                  const tableMatch = tableAndAfter.match(/\| ETF \|[\s\S]+?(?=\n\n|$)/);
+                                  const tableText = tableMatch ? tableMatch[0] : '';
+                                  const after = tableAndAfter.replace(tableText, '');
+                                  return <>
+                                    {before && <span>{before.trim()}\n\n</span>}
+                                    {tableText && renderPortfolioTable(tableText)}
+                                    {after && <span>{after.trim()}</span>}
+                                  </>;
+                                })()
+                              : message.content}
+                          </div>
+                        </div>
+                        {message.role === "bot" && 
+                         userProfile.investmentAmount && 
+                         message.content.includes("Model Portfolio:") && (
+                          <FeedbackButton
+                            messageId={`msg-${index}`}
+                            isDarkMode={isDarkMode}
+                            onFeedbackSubmit={async (feedback) => {
+                              try {
+                                const response = await fetch('/api/feedback', {
+                                  method: 'POST',
+                                  headers: {
+                                    'Content-Type': 'application/json',
+                                  },
+                                  body: JSON.stringify({
+                                    messageId: `msg-${index}`,
+                                    userProfile,
+                                    ...feedback,
+                                  }),
+                                });
+                                
+                                if (!response.ok) {
+                                  throw new Error('Failed to submit feedback');
+                                }
+                              } catch (error) {
+                                console.error('Error submitting feedback:', error);
+                              }
+                            }}
+                          />
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              </ScrollArea>
             </CardContent>
-            <CardFooter className="border-t border-gray-700 p-4">
+            <CardFooter className="border-t border-gray-700 p-3">
               <form
                 onSubmit={(e) => {
                   e.preventDefault()
@@ -380,7 +579,7 @@ export default function EasyEquitiesAdvisor() {
               {/* Market Analysis Card */}
               <Card className={`${
                 isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'
-              } shadow-lg animate-fadeIn`}>
+              } shadow-lg animate-fadeIn h-full`}>
                 <CardHeader className="border-b border-gray-700 py-4">
                   <CardTitle className="text-xl flex items-center space-x-2">
                     <TrendingUp className={`w-6 h-6 ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`} />
@@ -412,6 +611,13 @@ export default function EasyEquitiesAdvisor() {
                           </div>
                         ))}
                       </div>
+                      <ThumbsFeedback label="Was this market analysis helpful?" isDarkMode={isDarkMode} onFeedback={(val) => {
+                        fetch('/api/feedback', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ type: 'market', value: val, userProfile })
+                        })
+                      }} />
                     </div>
                   )}
                 </CardContent>
@@ -420,7 +626,7 @@ export default function EasyEquitiesAdvisor() {
               {/* Portfolio Visualization Card */}
               <Card className={`${
                 isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'
-              } shadow-lg animate-fadeIn`}>
+              } shadow-lg animate-fadeIn h-full`}>
                 <CardHeader className="border-b border-gray-700 py-4">
                   <CardTitle className="text-xl flex items-center space-x-2">
                     <BarChart2 className={`w-6 h-6 ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`} />
@@ -432,7 +638,7 @@ export default function EasyEquitiesAdvisor() {
                 </CardHeader>
                 <CardContent className="p-6">
                   <div className="flex flex-col space-y-6">
-                    <div className="h-[300px]">
+                    <div className="h-[400px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <RechartsPieChart>
                           <Pie
@@ -442,10 +648,10 @@ export default function EasyEquitiesAdvisor() {
                             }))}
                             cx="50%"
                             cy="50%"
-                            outerRadius={100}
+                            outerRadius={150}
                             fill="#8884d8"
                             dataKey="value"
-                            label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                            label={props => renderPieLabel(props, isDarkMode)}
                             labelLine={false}
                           >
                             {Object.entries(generatedPortfolio).map((entry, index) => (
@@ -493,6 +699,13 @@ export default function EasyEquitiesAdvisor() {
                         </div>
                       ))}
                     </div>
+                    <ThumbsFeedback label="Was this portfolio visualization helpful?" isDarkMode={isDarkMode} onFeedback={(val) => {
+                      fetch('/api/feedback', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ type: 'visual', value: val, userProfile })
+                      })
+                    }} />
                   </div>
                 </CardContent>
               </Card>

@@ -16,6 +16,8 @@ type UserProfile = {
   riskScore: number // 1-10
   investmentHorizon: number // in years
   incomeNeeds: boolean
+  investmentType?: 'once-off' | 'monthly'
+  monthlyAmount?: number
 }
 
 type PortfolioWithAnalysis = {
@@ -64,11 +66,22 @@ export async function generateAdvancedPortfolio(userProfile: UserProfile, amount
   ];
 
   if (userProfile.incomeNeeds) {
-    rationale.push("Income requirement: Increased allocation to dividend-paying ETFs and bonds");
+    rationale.push("Income requirement: Increase allocation to dividend-paying ETFs and bonds");
   }
 
   if (marketConditions.volatilityIndex && marketConditions.volatilityIndex > 25) {
     rationale.push(`Market volatility adjustment: -10% equity due to high VIX (${marketConditions.volatilityIndex.toFixed(1)})`);
+  }
+
+  // --- Monthly investment projection logic ---
+  let monthlyProjection: string | null = null;
+  if (userProfile.investmentType === 'monthly' && userProfile.monthlyAmount && userProfile.investmentHorizon) {
+    // Assume average annual return of 7%
+    const r = 0.07 / 12;
+    const n = userProfile.investmentHorizon * 12;
+    const FV = userProfile.monthlyAmount * ((Math.pow(1 + r, n) - 1) / r) * (1 + r);
+    monthlyProjection = `If you invest R${userProfile.monthlyAmount.toLocaleString(undefined, {maximumFractionDigits:2})} per month for ${userProfile.investmentHorizon} years (assuming a 7% annual return), your projected portfolio value could be approximately R${FV.toLocaleString(undefined, {maximumFractionDigits:0})}.`;
+    rationale.push("Projection includes monthly compounding and assumes a 7% average annual return. Actual returns may vary.");
   }
 
   // Select ETFs based on market conditions and user profile
@@ -190,7 +203,7 @@ export async function generateAdvancedPortfolio(userProfile: UserProfile, amount
   return {
     portfolio,
     marketAnalysis: {
-      description: marketConditions.marketAnalysis.description,
+      description: marketConditions.marketAnalysis.description + (monthlyProjection ? `\n\n${monthlyProjection}` : ""),
       factors: marketConditions.marketAnalysis.factors,
       rationale
     }
