@@ -1,1 +1,16 @@
-[]
+[
+  {
+    "timestamp": "2025-05-29T16:56:46.138Z",
+    "messageId": "msg-1748537771803",
+    "userProfile": {
+      "investmentGoal": "100000",
+      "timeHorizon": 5,
+      "riskTolerance": "medium",
+      "incomeNeeds": "yes",
+      "investmentAmount": "1000",
+      "investmentType": "once-off"
+    },
+    "rating": "helpful",
+    "comment": "Great basic recommendation"
+  }
+]
